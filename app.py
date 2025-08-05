@@ -3,17 +3,17 @@ import fitz  # PDF
 import docx
 import pandas as pd
 import json
-import chromadb
+import faiss
+import numpy as np
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from sentence_transformers import SentenceTransformer
 
 # ---------- Initialize ----------
-chroma_client = chromadb.Client()
-collection = None  # will be created when file is uploaded
-
-# Embedding model
 embedder = SentenceTransformer("all-MiniLM-L6-v2")
 splitter = RecursiveCharacterTextSplitter(chunk_size=500, chunk_overlap=50)
+
+index = None
+docs = []
 
 
 # ---------- Extract ----------
@@ -43,22 +43,21 @@ def transform_text(text):
     return list(zip(chunks, embeddings))
 
 
-# ---------- Load ----------
+# ---------- Load into FAISS ----------
 def load_data(chunks_with_embeddings):
-    global collection
-    # delete old collection and recreate fresh
-    try:
-        chroma_client.delete_collection("docs")
-    except:
-        pass
-    collection = chroma_client.create_collection("docs")
+    global index, docs
+    docs = [chunk for chunk, _ in chunks_with_embeddings]
+    vectors = np.array([emb for _, emb in chunks_with_embeddings]).astype("float32")
+    dim = vectors.shape[1]
+    index = faiss.IndexFlatL2(dim)  # L2 distance index
+    index.add(vectors)
 
-    for idx, (chunk, emb) in enumerate(chunks_with_embeddings):
-        collection.add(
-            documents=[chunk],
-            embeddings=[emb],
-            ids=[str(idx)]
-        )
+
+# ---------- Query ----------
+def query_data(query, top_k=3):
+    query_vector = embedder.encode([query]).astype("float32")
+    distances, indices = index.search(query_vector, top_k)
+    return [docs[i] for i in indices[0]]
 
 
 # ---------- Streamlit UI ----------
@@ -73,11 +72,11 @@ if uploaded_file:
 
     chunks_with_embeddings = transform_text(text)
     load_data(chunks_with_embeddings)
-    st.success("✅ Text processed and stored in fresh vector DB")
+    st.success("✅ Text processed and stored in FAISS index")
 
     query = st.text_input("Ask a question about the document:")
-    if query and collection:
-        results = collection.query(query_texts=[query], n_results=3)
+    if query and index is not None:
+        results = query_data(query, top_k=3)
         st.write("### 🔎 Top Results")
-        for doc in results['documents'][0]:
+        for doc in results:
             st.write("-", doc)
