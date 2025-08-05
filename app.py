@@ -3,9 +3,10 @@ import fitz  # PDF
 import docx
 import pandas as pd
 import json
+import numpy as np
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from sentence_transformers import SentenceTransformer
-from langchain.vectorstores import DocArrayInMemorySearch
+from langchain_community.vectorstores import InMemoryVectorStore
 from langchain.schema import Document
 
 # ---------- Initialize ----------
@@ -41,13 +42,12 @@ def transform_text(text):
     return list(zip(chunks, embeddings))
 
 
-# ---------- Load into LangChain Vector Store ----------
+# ---------- Load into In-Memory Vector Store ----------
 def load_data(chunks_with_embeddings):
     global vector_store
     docs = [Document(page_content=chunk) for chunk, _ in chunks_with_embeddings]
-    embeddings = [emb for _, emb in chunks_with_embeddings]
-    # Build a simple in-memory search index
-    vector_store = DocArrayInMemorySearch.from_embeddings(docs, embeddings)
+    vectors = [emb for _, emb in chunks_with_embeddings]
+    vector_store = InMemoryVectorStore.from_embeddings(docs, vectors)
 
 
 # ---------- Query ----------
