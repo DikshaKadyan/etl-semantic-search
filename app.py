@@ -3,17 +3,15 @@ import fitz  # PDF
 import docx
 import pandas as pd
 import json
-import faiss
-import numpy as np
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from sentence_transformers import SentenceTransformer
+from langchain.vectorstores import DocArrayInMemorySearch
+from langchain.schema import Document
 
 # ---------- Initialize ----------
 embedder = SentenceTransformer("all-MiniLM-L6-v2")
 splitter = RecursiveCharacterTextSplitter(chunk_size=500, chunk_overlap=50)
-
-index = None
-docs = []
+vector_store = None
 
 
 # ---------- Extract ----------
@@ -43,21 +41,22 @@ def transform_text(text):
     return list(zip(chunks, embeddings))
 
 
-# ---------- Load into FAISS ----------
+# ---------- Load into LangChain Vector Store ----------
 def load_data(chunks_with_embeddings):
-    global index, docs
-    docs = [chunk for chunk, _ in chunks_with_embeddings]
-    vectors = np.array([emb for _, emb in chunks_with_embeddings]).astype("float32")
-    dim = vectors.shape[1]
-    index = faiss.IndexFlatL2(dim)  # L2 distance index
-    index.add(vectors)
+    global vector_store
+    docs = [Document(page_content=chunk) for chunk, _ in chunks_with_embeddings]
+    embeddings = [emb for _, emb in chunks_with_embeddings]
+    # Build a simple in-memory search index
+    vector_store = DocArrayInMemorySearch.from_embeddings(docs, embeddings)
 
 
 # ---------- Query ----------
 def query_data(query, top_k=3):
-    query_vector = embedder.encode([query]).astype("float32")
-    distances, indices = index.search(query_vector, top_k)
-    return [docs[i] for i in indices[0]]
+    if not vector_store:
+        return []
+    query_vector = embedder.encode([query])[0]
+    results = vector_store.similarity_search_by_vector(query_vector, k=top_k)
+    return [doc.page_content for doc in results]
 
 
 # ---------- Streamlit UI ----------
@@ -72,10 +71,10 @@ if uploaded_file:
 
     chunks_with_embeddings = transform_text(text)
     load_data(chunks_with_embeddings)
-    st.success("✅ Text processed and stored in FAISS index")
+    st.success("✅ Text processed and stored in in-memory vector store")
 
     query = st.text_input("Ask a question about the document:")
-    if query and index is not None:
+    if query and vector_store:
         results = query_data(query, top_k=3)
         st.write("### 🔎 Top Results")
         for doc in results:
