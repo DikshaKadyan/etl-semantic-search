@@ -1,0 +1,7 @@
+streamlit
+pymupdf
+python-docx
+pandas
+chromadb
+langchain
+sentence-transformers
