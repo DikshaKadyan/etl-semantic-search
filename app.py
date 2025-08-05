@@ -6,13 +6,13 @@ import json
 import numpy as np
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from sentence_transformers import SentenceTransformer
-from langchain_community.vectorstores import InMemoryVectorStore
-from langchain.schema import Document
 
 # ---------- Initialize ----------
 embedder = SentenceTransformer("all-MiniLM-L6-v2")
 splitter = RecursiveCharacterTextSplitter(chunk_size=500, chunk_overlap=50)
-vector_store = None
+
+docs = []
+embeddings = None
 
 
 # ---------- Extract ----------
@@ -38,25 +38,21 @@ def extract_text(file):
 # ---------- Transform ----------
 def transform_text(text):
     chunks = splitter.split_text(text)
-    embeddings = embedder.encode(chunks, show_progress_bar=False)
-    return list(zip(chunks, embeddings))
-
-
-# ---------- Load into In-Memory Vector Store ----------
-def load_data(chunks_with_embeddings):
-    global vector_store
-    docs = [Document(page_content=chunk) for chunk, _ in chunks_with_embeddings]
-    vectors = [emb for _, emb in chunks_with_embeddings]
-    vector_store = InMemoryVectorStore.from_embeddings(docs, vectors)
+    vectors = embedder.encode(chunks, show_progress_bar=False)
+    return chunks, np.array(vectors, dtype="float32")
 
 
 # ---------- Query ----------
 def query_data(query, top_k=3):
-    if not vector_store:
+    global docs, embeddings
+    if embeddings is None:
         return []
-    query_vector = embedder.encode([query])[0]
-    results = vector_store.similarity_search_by_vector(query_vector, k=top_k)
-    return [doc.page_content for doc in results]
+    query_vec = embedder.encode([query]).astype("float32")
+    # Cosine similarity
+    norms = np.linalg.norm(embeddings, axis=1) * np.linalg.norm(query_vec)
+    sims = np.dot(embeddings, query_vec.T).flatten() / norms
+    top_idx = sims.argsort()[-top_k:][::-1]
+    return [docs[i] for i in top_idx]
 
 
 # ---------- Streamlit UI ----------
@@ -69,12 +65,11 @@ if uploaded_file:
     text = extract_text(uploaded_file)
     st.success("✅ File uploaded and text extracted")
 
-    chunks_with_embeddings = transform_text(text)
-    load_data(chunks_with_embeddings)
-    st.success("✅ Text processed and stored in in-memory vector store")
+    docs, embeddings = transform_text(text)
+    st.success("✅ Text processed and stored in memory")
 
     query = st.text_input("Ask a question about the document:")
-    if query and vector_store:
+    if query and embeddings is not None:
         results = query_data(query, top_k=3)
         st.write("### 🔎 Top Results")
         for doc in results:
